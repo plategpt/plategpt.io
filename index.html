@@ -1,7 +1,633 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PlateGPT Web App</title>
+  <style>
+    /* Basic Reset / Utility */
+    * {
+      margin: 0; 
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: Arial, sans-serif;
+      background: #f9f9f9;
+      color: #333;
+    }
+    main {
+      padding: 20px;
+    }
+    
+    /* Tabs Container */
+    .tabs {
+      display: flex;
+      background: #ddd;
+    }
+    .tab {
+      flex: 1;
+      text-align: center;
+      padding: 10px;
+      cursor: pointer;
+      background: #ccc;
+      border-right: 1px solid #bbb;
+    }
+    .tab:last-child {
+      border-right: none;
+    }
+    .tab.active {
+      background: #fff;
+      font-weight: bold;
+    }
+    
+    /* Sections */
+    section {
+      display: none; /* hidden by default */
+    }
+    section.active {
+      display: block; /* show active tab section */
+    }
+
+    /* Simple styling for lists, headings, etc. */
+    .section-title {
+      margin-bottom: 10px;
+      font-size: 1.2rem;
+      font-weight: bold;
+    }
+    .button {
+      display: inline-block;
+      padding: 8px 12px;
+      margin: 5px 0;
+      background: #0275d8;
+      color: #fff;
+      border-radius: 4px;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .button:disabled {
+      background: #aaa;
+      cursor: default;
+    }
+    .alert {
+      color: red;
+      margin: 10px 0;
+    }
+    /* Very basic table styling for meal plan */
+    .meal-plan-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    .meal-plan-table th,
+    .meal-plan-table td {
+      border: 1px solid #ccc;
+      padding: 8px;
+    }
+    .meal-plan-row {
+      background: #f0f8ff;
+    }
+    .checkbox-btn {
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    /* Category badge */
+    .category-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      color: #fff;
+      margin-left: 5px;
+    }
+    .cat-beef   { background: orange; }
+    .cat-chicken{ background: yellow; color: #333; }
+    .cat-veggie { background: green; }
+    .cat-default{ background: gray; }
+  </style>
+</head>
 <body>
-<h1>Hello World</h1>
-<p>I'm hosted with GitHub Pages.</p>
+
+  <!-- Tabs at the top -->
+  <div class="tabs">
+    <div class="tab active" data-tab="recipes">Recipes</div>
+    <div class="tab" data-tab="mealplan">Meal Plan</div>
+    <div class="tab" data-tab="shopping">Shopping</div>
+    <div class="tab" data-tab="profile">Profile</div>
+  </div>
+
+  <main>
+    <!-- Recipes Section -->
+    <section id="recipes" class="active">
+      <h2 class="section-title">Recipes</h2>
+      <input 
+        type="text" 
+        id="searchRecipes" 
+        placeholder="Search by name or ingredient..."
+        style="width: 100%; padding: 8px; margin-bottom: 10px;"
+      />
+      <div id="recipesList">Loading...</div>
+    </section>
+
+    <!-- Meal Plan Section -->
+    <section id="mealplan">
+      <h2 class="section-title">Meal Plan</h2>
+      <div>
+        <button class="button" id="clearMealPlanBtn">Clear</button>
+        <button class="button" id="addAllBtn">Add All</button>
+      </div>
+      <table class="meal-plan-table">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Recipe</th>
+            <th>Add to Shopping</th>
+          </tr>
+        </thead>
+        <tbody id="mealPlanTableBody">
+          <!-- Dynamically populated from JS -->
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Shopping List Section -->
+    <section id="shopping">
+      <h2 class="section-title">Shopping List</h2>
+      <div>
+        <button class="button" id="clearShoppingBtn">Clear</button>
+        <button class="button" id="cleanUpBtn">Clean Up</button>
+      </div>
+      <div id="cleanUpError" class="alert" style="display: none;"></div>
+      
+      <div id="uncleanedList" style="margin-top: 15px;">
+        <!-- Un-cleaned items with checkboxes (if categorizedShoppingList is empty) -->
+      </div>
+      <div id="cleanedList" style="margin-top: 15px;">
+        <!-- Cleaned, categorized list -->
+      </div>
+    </section>
+
+    <!-- Profile Section -->
+    <section id="profile">
+      <h2 class="section-title">Profile</h2>
+      <p id="cleanupCountText"></p>
+      <p id="cleanupCostText"></p>
+      <p style="max-width: 600px;">
+        This cost is associated with how many times the "Clean Up" button has been pressed on this device.
+      </p>
+    </section>
+  </main>
+
+  <script>
+    /**************************************************************
+     *  "ViewModel" Equivalent in JavaScript
+     **************************************************************/
+    const weekdays = ["MON", "TUE", "WED", "THUR", "FRI", "SAT", "SUN"];
+
+    // In Swift: class MealPlanViewModel
+    const viewModel = {
+      allRecipes: [],
+      mealPlan: [null, null, null, null, null, null, null],
+      shoppingList: [],
+      alreadyAddedRecipeIDs: new Set(),
+      isCleaningUp: false,
+      cleanupErrorMessage: null,
+      categorizedShoppingList: {}, // key -> array of strings
+      cleanupPressCount: 0,
+      costPerPress: 0.05, // $0.05 USD
+
+      saveData() {
+        const data = {
+          mealPlanIDs: this.mealPlan.map(r => (r ? r.recipeID : null)),
+          shoppingList: this.shoppingList,
+          categorizedShoppingList: this.categorizedShoppingList,
+          alreadyAddedRecipeIDs: Array.from(this.alreadyAddedRecipeIDs),
+          cleanupPressCount: this.cleanupPressCount
+        };
+        localStorage.setItem("MealPlanData", JSON.stringify(data));
+      },
+      loadData() {
+        const loaded = localStorage.getItem("MealPlanData");
+        if(!loaded) return;
+        try {
+          const parsed = JSON.parse(loaded);
+          // We only load the plan IDs here; we'll fetch recipes separately
+          this.shoppingList = parsed.shoppingList || [];
+          this.categorizedShoppingList = parsed.categorizedShoppingList || {};
+          this.alreadyAddedRecipeIDs = new Set(parsed.alreadyAddedRecipeIDs || []);
+          this.cleanupPressCount = parsed.cleanupPressCount || 0;
+
+          // We'll wait to rebuild meal plan after we load recipes
+          const mealPlanIDs = parsed.mealPlanIDs || [null, null, null, null, null, null, null];
+          // We'll keep this around to re-populate once recipes are loaded
+          this._storedMealPlanIDs = mealPlanIDs;
+        } catch(e) {
+          console.error("Failed to parse localStorage data:", e);
+        }
+      },
+      rebuildMealPlan() {
+        // If we haven't loaded recipes yet, or no stored IDs, skip
+        if(!this.allRecipes.length || !this._storedMealPlanIDs) return;
+
+        this.mealPlan = this._storedMealPlanIDs.map(rid => {
+          if(!rid) return null;
+          const found = this.allRecipes.find(recipe => recipe.recipeID === rid);
+          return found || null;
+        });
+      },
+
+      clearMealPlan() {
+        this.mealPlan = [null, null, null, null, null, null, null];
+        this._storedMealPlanIDs = [null, null, null, null, null, null, null];
+        this.saveData();
+      },
+      clearShoppingList() {
+        this.shoppingList = [];
+        this.alreadyAddedRecipeIDs.clear();
+        this.categorizedShoppingList = {};
+        this.saveData();
+      },
+
+      async cleanUpShoppingList() {
+        if(!this.shoppingList.length) {
+          this.cleanupErrorMessage = "Shopping list is already empty.";
+          return;
+        }
+        this.isCleaningUp = true;
+        this.cleanupErrorMessage = null;
+        // Increment the count
+        this.cleanupPressCount += 1;
+        this.saveData();
+
+        try {
+          const url = "https://hnwzsswx6d.execute-api.us-east-2.amazonaws.com/prod/cleanShoppingList";
+          const payload = { ingredient_string: this.shoppingList.join("\n") };
+          
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+
+          this.isCleaningUp = false;
+          if(!response.ok) {
+            this.cleanupErrorMessage = "Error from server: " + response.status;
+            return;
+          }
+          const result = await response.json();
+          // e.g. result might look like { "cleaned_list": {"Produce": [...], "Meat": [...]} }
+          const cleaned = result["cleaned_list"];
+          if(!cleaned) {
+            this.cleanupErrorMessage = "Invalid response format: Missing 'cleaned_list'.";
+            return;
+          }
+          // Store it
+          this.categorizedShoppingList = cleaned;
+          // We do NOT wipe out shoppingList so user can still see raw version if needed
+          this.saveData();
+        } catch(err) {
+          this.isCleaningUp = false;
+          this.cleanupErrorMessage = "Network error: " + err.message;
+        }
+      },
+    };
+
+    /**************************************************************
+     *  On Page Load
+     **************************************************************/
+    document.addEventListener("DOMContentLoaded", () => {
+      // 1) Load Data from localStorage
+      viewModel.loadData();
+
+      // 2) Hook up tab switching
+      const tabElems = document.querySelectorAll(".tab");
+      tabElems.forEach(tab => {
+        tab.addEventListener("click", () => {
+          // Deactivate all tabs
+          tabElems.forEach(t => t.classList.remove("active"));
+          // Activate the clicked one
+          tab.classList.add("active");
+          // Hide all sections
+          document.querySelectorAll("section").forEach(sec => sec.classList.remove("active"));
+          // Show the matching section
+          const tabName = tab.getAttribute("data-tab");
+          document.getElementById(tabName).classList.add("active");
+        });
+      });
+
+      // 3) Fetch Recipes
+      fetchRecipesAndInitialize();
+
+      // 4) Wire up all buttons
+      document.getElementById("clearMealPlanBtn").addEventListener("click", () => {
+        viewModel.clearMealPlan();
+        renderMealPlan();
+      });
+      document.getElementById("addAllBtn").addEventListener("click", addAllMealsToList);
+      document.getElementById("clearShoppingBtn").addEventListener("click", () => {
+        viewModel.clearShoppingList();
+        renderShoppingList();
+      });
+      document.getElementById("cleanUpBtn").addEventListener("click", async () => {
+        await viewModel.cleanUpShoppingList();
+        renderShoppingList(); // re-render after cleanup
+        renderProfile();      // update cost
+        if(viewModel.cleanupErrorMessage) {
+          showCleanUpError(viewModel.cleanupErrorMessage);
+        }
+      });
+
+      // 5) Search for recipes
+      document.getElementById("searchRecipes").addEventListener("input", (ev) => {
+        renderRecipes(ev.target.value);
+      });
+
+      // 6) Initial renders
+      renderShoppingList();
+      renderProfile();
+    });
+
+    /**************************************************************
+     *  Fetch Recipes and Initialize
+     **************************************************************/
+    async function fetchRecipesAndInitialize() {
+      const recipesListDiv = document.getElementById("recipesList");
+      recipesListDiv.textContent = "Loading Recipes...";
+
+      try {
+        const res = await fetch("https://app.plategpt.io/recipes.json");
+        if(!res.ok) throw new Error("Network error: " + res.status);
+        const data = await res.json();
+        viewModel.allRecipes = data;
+        recipesListDiv.textContent = ""; // Clear loading message
+
+        // Rebuild meal plan now that we have recipes
+        viewModel.rebuildMealPlan();
+
+        // Render recipes
+        renderRecipes("");
+        // Render meal plan
+        renderMealPlan();
+      } catch(err) {
+        recipesListDiv.textContent = "Failed to load recipes: " + err.message;
+      }
+    }
+
+    /**************************************************************
+     *  Render Functions
+     **************************************************************/
+    // RENDER RECIPES
+    function renderRecipes(filterText) {
+      const container = document.getElementById("recipesList");
+      container.innerHTML = "";
+
+      // Filter
+      const lowerFilter = filterText.toLowerCase();
+      const filtered = viewModel.allRecipes.filter(r => {
+        if(!lowerFilter) return true;
+        const inTitle = r.title.toLowerCase().includes(lowerFilter);
+        const inIngredients = (r.ingredients || "").toLowerCase().includes(lowerFilter);
+        return inTitle || inIngredients;
+      });
+
+      // Sort assigned first
+      filtered.sort((a, b) => {
+        const iA = dayIndexOf(a);
+        const iB = dayIndexOf(b);
+        return iA - iB;
+      });
+
+      // Build rows
+      filtered.forEach(recipe => {
+        const div = document.createElement("div");
+        div.style.border = "1px solid #ccc";
+        div.style.padding = "10px";
+        div.style.marginBottom = "5px";
+        div.style.display = "flex";
+        div.style.alignItems = "center";
+        div.style.justifyContent = "space-between";
+
+        // Left side: image & title
+        const leftDiv = document.createElement("div");
+        leftDiv.style.display = "flex";
+        leftDiv.style.alignItems = "center";
+
+        // Example placeholder image (since we can’t easily reference "MyApp/Assets")
+        const img = document.createElement("img");
+        img.src = "https://via.placeholder.com/50"; 
+        img.alt = recipe.title;
+        img.style.borderRadius = "50%";
+        img.style.marginRight = "10px";
+        img.width = 50;
+        img.height = 50;
+        leftDiv.appendChild(img);
+
+        const titleSpan = document.createElement("span");
+        titleSpan.textContent = recipe.title;
+        titleSpan.style.fontWeight = "bold";
+        leftDiv.appendChild(titleSpan);
+
+        // Category badge
+        if(recipe.category) {
+          const catSpan = document.createElement("span");
+          catSpan.textContent = recipe.category;
+          catSpan.classList.add("category-badge", categoryToClass(recipe.category));
+          leftDiv.appendChild(catSpan);
+        }
+
+        div.appendChild(leftDiv);
+
+        // Right side: assigned day or plus button
+        const assignedIndex = viewModel.mealPlan.findIndex(m => m && m.recipeID === recipe.recipeID);
+        if(assignedIndex !== -1) {
+          // Already assigned -> show day
+          const daySpan = document.createElement("span");
+          daySpan.style.padding = "5px 10px";
+          daySpan.style.background = "#aaa";
+          daySpan.style.color = "#fff";
+          daySpan.style.borderRadius = "4px";
+          daySpan.textContent = weekdays[assignedIndex];
+          div.appendChild(daySpan);
+        } else {
+          // plus menu
+          const daySelect = document.createElement("select");
+          daySelect.innerHTML = [
+            "<option disabled selected>Assign to day</option>",
+            ...weekdays.map((day, idx) => `<option value="${idx}">${day}</option>`)
+          ].join("");
+          daySelect.addEventListener("change", ev => {
+            const dayIndex = parseInt(ev.target.value);
+            viewModel.mealPlan[dayIndex] = recipe;
+            viewModel.saveData();
+            renderMealPlan();
+            renderRecipes(document.getElementById("searchRecipes").value);
+          });
+          div.appendChild(daySelect);
+        }
+        container.appendChild(div);
+      });
+    }
+
+    // HELPER: dayIndexOf
+    function dayIndexOf(recipe) {
+      const idx = viewModel.mealPlan.findIndex(r => r && r.recipeID === recipe.recipeID);
+      return idx === -1 ? 999 : idx;
+    }
+
+    // RENDER MEAL PLAN
+    function renderMealPlan() {
+      const tbody = document.getElementById("mealPlanTableBody");
+      tbody.innerHTML = "";
+      weekdays.forEach((day, idx) => {
+        const tr = document.createElement("tr");
+        tr.classList.add("meal-plan-row");
+        
+        // Day cell
+        const dayTd = document.createElement("td");
+        dayTd.textContent = day;
+        tr.appendChild(dayTd);
+
+        // Recipe cell
+        const recipeTd = document.createElement("td");
+        const selectedRecipe = viewModel.mealPlan[idx];
+        if(selectedRecipe) {
+          recipeTd.textContent = selectedRecipe.title;
+        } else {
+          recipeTd.textContent = "Select a meal";
+          recipeTd.style.color = "#999";
+        }
+        tr.appendChild(recipeTd);
+
+        // Add button cell
+        const addTd = document.createElement("td");
+        if(selectedRecipe) {
+          const isAlreadyAdded = viewModel.alreadyAddedRecipeIDs.has(selectedRecipe.recipeID);
+          const btn = document.createElement("button");
+          btn.classList.add("button");
+          btn.textContent = isAlreadyAdded ? "Added" : "Add";
+          btn.disabled = isAlreadyAdded;
+          btn.addEventListener("click", () => {
+            if(!isAlreadyAdded) {
+              selectedRecipe.ingredientsArray = (selectedRecipe.ingredients || "").split(" | ");
+              viewModel.shoppingList.push(...selectedRecipe.ingredientsArray);
+              viewModel.alreadyAddedRecipeIDs.add(selectedRecipe.recipeID);
+              viewModel.saveData();
+              renderShoppingList();
+              renderMealPlan();
+            }
+          });
+          addTd.appendChild(btn);
+        }
+        tr.appendChild(addTd);
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ADD ALL MEALS
+    function addAllMealsToList() {
+      viewModel.mealPlan.forEach(r => {
+        if(r && !viewModel.alreadyAddedRecipeIDs.has(r.recipeID)) {
+          r.ingredientsArray = (r.ingredients || "").split(" | ");
+          viewModel.shoppingList.push(...r.ingredientsArray);
+          viewModel.alreadyAddedRecipeIDs.add(r.recipeID);
+        }
+      });
+      viewModel.saveData();
+      renderShoppingList();
+      renderMealPlan();
+    }
+
+    // RENDER SHOPPING LIST
+    function renderShoppingList() {
+      const uncleanedDiv = document.getElementById("uncleanedList");
+      const cleanedDiv = document.getElementById("cleanedList");
+      uncleanedDiv.innerHTML = "";
+      cleanedDiv.innerHTML = "";
+
+      if(Object.keys(viewModel.categorizedShoppingList).length === 0) {
+        // Show uncleaned items
+        if(viewModel.shoppingList.length === 0) {
+          uncleanedDiv.innerHTML = "<p style='color:gray;'>No ingredients added yet.</p>";
+        } else {
+          // Show each item with a checkbox
+          viewModel.shoppingList.forEach((item, i) => {
+            const row = document.createElement("div");
+            row.style.marginBottom = "5px";
+            const checkbox = document.createElement("span");
+            checkbox.classList.add("checkbox-btn");
+            checkbox.textContent = "[ ]";
+            checkbox.addEventListener("click", () => {
+              // Toggle
+              checkbox.textContent = (checkbox.textContent === "[ ]") ? "[x]" : "[ ]";
+            });
+            row.appendChild(checkbox);
+
+            const txt = document.createElement("span");
+            txt.textContent = item;
+            row.appendChild(txt);
+
+            uncleanedDiv.appendChild(row);
+          });
+        }
+      } else {
+        // Show cleaned, categorized list
+        for(const cat of Object.keys(viewModel.categorizedShoppingList).sort()) {
+          const catHeader = document.createElement("h3");
+          catHeader.textContent = cat;
+          catHeader.style.color = "blue";
+          cleanedDiv.appendChild(catHeader);
+
+          const items = viewModel.categorizedShoppingList[cat];
+          items.forEach(item => {
+            const row = document.createElement("div");
+            row.style.marginBottom = "5px";
+
+            // If you want checkboxes in the cleaned list, do similarly:
+            const checkbox = document.createElement("span");
+            checkbox.classList.add("checkbox-btn");
+            checkbox.textContent = "[ ]";
+            checkbox.addEventListener("click", () => {
+              checkbox.textContent = (checkbox.textContent === "[ ]") ? "[x]" : "[ ]";
+            });
+            row.appendChild(checkbox);
+
+            const txt = document.createElement("span");
+            txt.textContent = item;
+            row.appendChild(txt);
+
+            cleanedDiv.appendChild(row);
+          });
+        }
+      }
+    }
+
+    // SHOW CLEANUP ERROR
+    function showCleanUpError(msg) {
+      const errDiv = document.getElementById("cleanUpError");
+      errDiv.style.display = "block";
+      errDiv.textContent = msg;
+      setTimeout(() => {
+        errDiv.style.display = "none";
+      }, 5000);
+    }
+
+    // RENDER PROFILE
+    function renderProfile() {
+      const countText = document.getElementById("cleanupCountText");
+      const costText = document.getElementById("cleanupCostText");
+      countText.textContent = "Cleanup Press Count: " + viewModel.cleanupPressCount;
+      const totalCost = (viewModel.cleanupPressCount * viewModel.costPerPress).toFixed(2);
+      costText.textContent = `Total Cleanup Cost: $${totalCost}`;
+    }
+
+    // HELPER: category to class
+    function categoryToClass(cat) {
+      const lower = cat.toLowerCase();
+      if(lower.includes("beef")) return "cat-beef";
+      if(lower.includes("chicken")) return "cat-chicken";
+      if(lower.includes("veggie")) return "cat-veggie";
+      return "cat-default";
+    }
+  </script>
 </body>
 </html>
